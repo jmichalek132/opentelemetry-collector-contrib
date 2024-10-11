@@ -5,6 +5,7 @@ package prometheusremotewrite
 
 import (
 	"encoding/hex"
+	"github.com/prometheus/prometheus/model/labels"
 	"math"
 	"strings"
 	"testing"
@@ -134,6 +135,18 @@ func getAttributes(labels ...string) pcommon.Map {
 		attributeMap.PutStr(labels[i], labels[i+1])
 	}
 	return attributeMap
+}
+
+// Prometheus TimeSeries
+func getPromLabelsV2(lbs ...string) labels.Labels {
+	pbLbs := labels.Labels{}
+	for i := 0; i < len(lbs); i += 2 {
+		pbLbs = append(pbLbs, labels.Label{
+			Name:  lbs[i],
+			Value: lbs[i+1],
+		})
+	}
+	return pbLbs
 }
 
 // Prometheus TimeSeries
