@@ -50,6 +50,7 @@ func createAttributesV2(resource pcommon.Resource, attributes pcommon.Map, exter
 		}
 		return true
 	})
+	// TODO New returns a sorted Labels from the given labels. The caller has to guarantee that all label names are unique.
 	seriesLabels := labels.New(tempSeriesLabels...) // This sorts by name
 
 	for _, label := range seriesLabels {
