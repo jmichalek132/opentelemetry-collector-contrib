@@ -41,19 +41,18 @@ func createAttributesV2(resource pcommon.Resource, attributes pcommon.Map, exter
 
 	// Ensure attributes are sorted by key for consistent merging of keys which
 	// collide when sanitized.
-	serieslabels := labels.Labels{}
+	tempSeriesLabels := labels.Labels{}
 	// XXX: Should we always drop service namespace/service name/service instance ID from the labels
 	// (as they get mapped to other Prometheus labels)?
 	attributes.Range(func(key string, value pcommon.Value) bool {
 		if !slices.Contains(ignoreAttrs, key) {
-			serieslabels = append(serieslabels, labels.Label{Name: key, Value: value.AsString()})
+			tempSeriesLabels = append(tempSeriesLabels, labels.Label{Name: key, Value: value.AsString()})
 		}
 		return true
 	})
-	// Afaik not needed
-	//sort.Stable(ByLabelName(labels))
+	seriesLabels := labels.New(tempSeriesLabels...) // This sorts by name
 
-	for _, label := range serieslabels {
+	for _, label := range seriesLabels {
 		var finalKey = prometheustranslator.NormalizeLabel(label.Name)
 		if existingValue, alreadyExists := l[finalKey]; alreadyExists {
 			l[finalKey] = existingValue + ";" + label.Value
@@ -99,10 +98,10 @@ func createAttributesV2(resource pcommon.Resource, attributes pcommon.Map, exter
 		l[name] = extras[i+1]
 	}
 
-	serieslabels = serieslabels[:0]
+	seriesLabels = seriesLabels[:0]
 	for k, v := range l {
-		serieslabels = append(serieslabels, labels.Label{Name: k, Value: v})
+		seriesLabels = append(seriesLabels, labels.Label{Name: k, Value: v})
 	}
 
-	return serieslabels
+	return seriesLabels
 }

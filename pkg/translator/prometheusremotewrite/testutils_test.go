@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
-
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"

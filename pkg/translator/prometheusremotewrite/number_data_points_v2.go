@@ -6,11 +6,10 @@ package prometheusremotewrite // import "github.com/open-telemetry/opentelemetry
 import (
 	"math"
 
-	"go.opentelemetry.io/collector/pdata/pcommon"
-
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/value"
 	writev2 "github.com/prometheus/prometheus/prompb/io/prometheus/write/v2"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
