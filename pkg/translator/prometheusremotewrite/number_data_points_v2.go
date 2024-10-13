@@ -4,8 +4,9 @@
 package prometheusremotewrite // import "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheusremotewrite"
 
 import (
-	"go.opentelemetry.io/collector/pdata/pcommon"
 	"math"
+
+	"go.opentelemetry.io/collector/pdata/pcommon"
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/value"

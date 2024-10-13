@@ -1,10 +1,14 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package prometheusremotewrite
 
 import (
+	"testing"
+
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
-	"testing"
 )
 
 // Test_createLabelSet checks resultant label names are sanitized and label in extra overrides label in labels if

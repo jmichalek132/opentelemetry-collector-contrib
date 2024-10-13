@@ -5,13 +5,15 @@ package prometheusremotewrite // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"fmt"
-	prometheustranslator "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheus"
+	"log"
+	"slices"
+
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	conventions "go.opentelemetry.io/collector/semconv/v1.25.0"
-	"log"
-	"slices"
+
+	prometheustranslator "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheus"
 )
 
 // createAttributes creates a slice of Prometheus Labels with OTLP attributes and pairs of string values.

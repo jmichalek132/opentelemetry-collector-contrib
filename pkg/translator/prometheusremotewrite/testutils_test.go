@@ -5,11 +5,12 @@ package prometheusremotewrite
 
 import (
 	"encoding/hex"
-	"github.com/prometheus/prometheus/model/labels"
 	"math"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/require"
