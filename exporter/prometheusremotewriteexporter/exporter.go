@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/golang/snappy"
 	"io"
 	"math"
 	"net/http"
@@ -16,8 +17,6 @@ import (
 	"sync"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/gogo/protobuf/proto"
-	"github.com/golang/snappy"
 	"github.com/prometheus/prometheus/prompb"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
@@ -64,7 +63,7 @@ func (p *prwTelemetryOtel) recordTranslatedTimeSeries(ctx context.Context, numTS
 }
 
 type buffer struct {
-	protobuf *proto.Buffer
+	protobuf *bytes.Buffer
 	snappy   []byte
 }
 
@@ -72,7 +71,7 @@ type buffer struct {
 var bufferPool = sync.Pool{
 	New: func() any {
 		return &buffer{
-			protobuf: proto.NewBuffer(nil),
+			protobuf: bytes.NewBuffer(nil),
 			snappy:   nil,
 		}
 	},
@@ -318,7 +317,9 @@ func (prwe *prwExporter) execute(ctx context.Context, writeReq *prompb.WriteRequ
 	defer bufferPool.Put(buf)
 
 	// Uses proto.Marshal to convert the WriteRequest into bytes array
-	errMarshal := buf.protobuf.Marshal(writeReq)
+	//errMarshal := buf.protobuf.Marshal(writeReq)
+	_, errMarshal := writeReq.MarshalTo(buf.protobuf.Bytes())
+
 	if errMarshal != nil {
 		return consumererror.NewPermanent(errMarshal)
 	}
@@ -332,7 +333,7 @@ func (prwe *prwExporter) execute(ctx context.Context, writeReq *prompb.WriteRequ
 			buf.snappy = buf.snappy[:maxCompressedLen]
 		}
 	}
-	compressedData := snappy.Encode(buf.snappy, buf.protobuf.Bytes())
+	//compressedData := snappy.Encode(buf.snappy, buf.protobuf.Bytes())
 
 	// executeFunc can be used for backoff and non backoff scenarios.
 	executeFunc := func() error {
@@ -346,7 +347,8 @@ func (prwe *prwExporter) execute(ctx context.Context, writeReq *prompb.WriteRequ
 		}
 
 		// Create the HTTP POST request to send to the endpoint
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, prwe.endpointURL.String(), bytes.NewReader(compressedData))
+		//req, err := http.NewRequestWithContext(ctx, http.MethodPost, prwe.endpointURL.String(), bytes.NewReader(compressedData))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, prwe.endpointURL.String(), buf.protobuf)
 		if err != nil {
 			return backoff.Permanent(consumererror.NewPermanent(err))
 		}
