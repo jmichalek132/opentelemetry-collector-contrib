@@ -4,19 +4,15 @@
 package prometheusremotewriteexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter"
 
 import (
-	"errors"
-	"sort"
-
 	writev2 "github.com/prometheus/prometheus/prompb/io/prometheus/write/v2"
 )
 
 func batchTimeSeriesV2(tsMap map[string]*writev2.TimeSeries, symbolsTable writev2.SymbolsTable, maxBatchByteSize int, state *batchTimeSeriesState) ([]*writev2.Request, error) {
-	if len(tsMap) == 0 {
-		return nil, errors.New("invalid tsMap: cannot be empty map")
+	// Convert to generic TimeSeries map
+	genericTsMap := make(map[string]TimeSeries, len(tsMap))
+	for key, ts := range tsMap {
+		genericTsMap[key] = ts
 	}
-
-	requests := make([]*writev2.Request, 0, max(10, state.nextRequestBufferSize))
-	tsArray := make([]writev2.TimeSeries, 0, calculateOptimalBufferSize(state.nextTimeSeriesBufferSize, len(tsMap)))
 
 	// Calculate symbols table size once since it's shared across batches
 	symbolsSize := 0
@@ -24,54 +20,25 @@ func batchTimeSeriesV2(tsMap map[string]*writev2.TimeSeries, symbolsTable writev
 		symbolsSize += len(symbol)
 	}
 
-	sizeOfCurrentBatch := symbolsSize // Initialize with symbols table size
-	i := 0
-
-	for _, v := range tsMap {
-		sizeOfSeries := v.Size()
-
-		if sizeOfCurrentBatch+sizeOfSeries >= maxBatchByteSize {
-			state.nextTimeSeriesBufferSize = max(10, 2*len(tsArray))
-			wrapped := convertTimeseriesToRequestV2(tsArray, symbolsTable)
-			requests = append(requests, wrapped)
-
-			tsArray = make([]writev2.TimeSeries, 0, calculateOptimalBufferSize(state.nextTimeSeriesBufferSize, len(tsMap)-i))
-			sizeOfCurrentBatch = symbolsSize // Reset to symbols table size for new batch
-		}
-
-		tsArray = append(tsArray, *v)
-		sizeOfCurrentBatch += sizeOfSeries
-		i++
+	// Use unified batching for time series with symbols table size as extra overhead
+	converter := NewV2TimeSeriesConverter(symbolsTable)
+	requests, err := batchTimeSeriesGeneric(genericTsMap, maxBatchByteSize, state, converter, symbolsSize)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(tsArray) != 0 {
-		// TODO only sent necessary part of the symbolsTable
-		wrapped := convertTimeseriesToRequestV2(tsArray, symbolsTable)
-		requests = append(requests, wrapped)
+	// Convert generic requests back to v2 requests
+	v2Requests := make([]*writev2.Request, 0, len(requests))
+	for _, req := range requests {
+		v2Req := req.(*prwV2Request)
+		v2Requests = append(v2Requests, v2Req.Request)
 	}
 
-	state.nextRequestBufferSize = 2 * len(requests)
-	return requests, nil
+	return v2Requests, nil
 }
 
-func convertTimeseriesToRequestV2(tsArray []writev2.TimeSeries, symbolsTable writev2.SymbolsTable) *writev2.Request {
-	return &writev2.Request{
-		// Prometheus requires time series to be sorted by Timestamp to avoid out of order problems.
-		// See:
-		// * https://github.com/open-telemetry/wg-prometheus/issues/10
-		// * https://github.com/open-telemetry/opentelemetry-collector/issues/2315
-		// TODO: try to sort while batching?
-		Timeseries: orderBySampleTimestampV2(tsArray),
-		Symbols:    symbolsTable.Symbols(),
-	}
-}
-
+// orderBySampleTimestampV2 sorts v2 time series by timestamp - exposed for tests
 func orderBySampleTimestampV2(tsArray []writev2.TimeSeries) []writev2.TimeSeries {
-	for i := range tsArray {
-		sL := tsArray[i].Samples
-		sort.Slice(sL, func(i, j int) bool {
-			return sL[i].Timestamp < sL[j].Timestamp
-		})
-	}
-	return tsArray
+	converter := &V2TimeSeriesConverter{symbolsTable: writev2.SymbolsTable{}}
+	return converter.SortTimeSeries(tsArray).([]writev2.TimeSeries)
 }

@@ -240,23 +240,6 @@ func (prwe *prwExporter) Shutdown(context.Context) error {
 	return err
 }
 
-func (prwe *prwExporter) pushMetricsV1(ctx context.Context, md pmetric.Metrics) error {
-	tsMap, err := prometheusremotewrite.FromMetrics(md, prwe.exporterSettings)
-
-	prwe.telemetry.recordTranslatedTimeSeries(ctx, len(tsMap))
-
-	var m []*prompb.MetricMetadata
-	if prwe.exporterSettings.SendMetadata {
-		m = prometheusremotewrite.OtelMetricsToMetadata(md, prwe.exporterSettings.AddMetricSuffixes, prwe.exporterSettings.Namespace)
-	}
-	if err != nil {
-		prwe.telemetry.recordTranslationFailure(ctx)
-		prwe.settings.Logger.Debug("failed to translate metrics, exporting remaining metrics", zap.Error(err), zap.Int("translated", len(tsMap)))
-	}
-	// Call export even if a conversion error, since there may be points that were successfully converted.
-	return prwe.handleExport(ctx, tsMap, m)
-}
-
 // PushMetrics converts metrics to Prometheus remote write TimeSeries and send to remote endpoint. It maintain a map of
 // TimeSeries, validates and handles each individual metric, adding the converted TimeSeries to the map, and finally
 // exports the map.
@@ -268,21 +251,9 @@ func (prwe *prwExporter) PushMetrics(ctx context.Context, md pmetric.Metrics) er
 	case <-prwe.closeChan:
 		return errors.New("shutdown has been called")
 	default:
-
-		// If feature flag not enabled support only RW1.
-		if !enableSendingRW2FeatureGate.IsEnabled() {
-			return prwe.pushMetricsV1(ctx, md)
-		}
-
-		// If feature flag was enabled check if we want to send RW1 or RW2.
-		switch prwe.RemoteWriteProtoMsg {
-		case config.RemoteWriteProtoMsgV1:
-			return prwe.pushMetricsV1(ctx, md)
-		case config.RemoteWriteProtoMsgV2:
-			return prwe.pushMetricsV2(ctx, md)
-		default:
-			return fmt.Errorf("unsupported remote-write protobuf message: %v", prwe.RemoteWriteProtoMsg)
-		}
+		// Use the unified metrics processor to handle both v1 and v2
+		processor := prwe.getMetricsProcessor()
+		return processor.ProcessMetrics(ctx, md)
 	}
 }
 

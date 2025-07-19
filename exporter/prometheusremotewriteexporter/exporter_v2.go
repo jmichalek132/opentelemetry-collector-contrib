@@ -9,10 +9,7 @@ import (
 	"strconv"
 
 	writev2 "github.com/prometheus/prometheus/prompb/io/prometheus/write/v2"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.uber.org/zap"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheusremotewrite"
 )
 
 // prwV2Request wraps writev2.Request to implement the Request interface
@@ -26,19 +23,6 @@ func (r *prwV2Request) Marshal() ([]byte, error) {
 
 func (r *prwV2Request) Size() int {
 	return r.Request.Size()
-}
-
-func (prwe *prwExporter) pushMetricsV2(ctx context.Context, md pmetric.Metrics) error {
-	tsMap, symbolsTable, err := prometheusremotewrite.FromMetricsV2(md, prwe.exporterSettings)
-
-	prwe.telemetry.recordTranslatedTimeSeries(ctx, len(tsMap))
-
-	if err != nil {
-		prwe.telemetry.recordTranslationFailure(ctx)
-		prwe.settings.Logger.Debug("failed to translate metrics, exporting remaining metrics", zap.Error(err), zap.Int("translated", len(tsMap)))
-	}
-	// Call export even if a conversion error, since there may be points that were successfully converted.
-	return prwe.handleExportV2(ctx, symbolsTable, tsMap)
 }
 
 // exportV2 sends a Snappy-compressed writev2.Request containing writev2.TimeSeries to a remote write endpoint.
