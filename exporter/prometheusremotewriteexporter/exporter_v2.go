@@ -5,19 +5,28 @@ package prometheusremotewriteexporter // import "github.com/open-telemetry/opent
 
 import (
 	"context"
-	"math"
 	"net/http"
 	"strconv"
-	"sync"
 
 	writev2 "github.com/prometheus/prometheus/prompb/io/prometheus/write/v2"
-	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheusremotewrite"
 )
+
+// prwV2Request wraps writev2.Request to implement the Request interface
+type prwV2Request struct {
+	*writev2.Request
+}
+
+func (r *prwV2Request) Marshal() ([]byte, error) {
+	return r.Request.Marshal()
+}
+
+func (r *prwV2Request) Size() int {
+	return r.Request.Size()
+}
 
 func (prwe *prwExporter) pushMetricsV2(ctx context.Context, md pmetric.Metrics) error {
 	tsMap, symbolsTable, err := prometheusremotewrite.FromMetricsV2(md, prwe.exporterSettings)
@@ -34,59 +43,14 @@ func (prwe *prwExporter) pushMetricsV2(ctx context.Context, md pmetric.Metrics) 
 
 // exportV2 sends a Snappy-compressed writev2.Request containing writev2.TimeSeries to a remote write endpoint.
 func (prwe *prwExporter) exportV2(ctx context.Context, requests []*writev2.Request) error {
-	input := make(chan *writev2.Request, len(requests))
-	for _, request := range requests {
-		input <- request
+	// Convert v2 requests to the generic Request interface
+	genericRequests := make([]Request, len(requests))
+	for i, req := range requests {
+		genericRequests[i] = &prwV2Request{Request: req}
 	}
-	close(input)
 
-	var wg sync.WaitGroup
-
-	concurrencyLimit := int(math.Min(float64(prwe.concurrency), float64(len(requests))))
-	wg.Add(concurrencyLimit) // used to wait for workers to be finished
-
-	var mu sync.Mutex
-	var errs error
-	// Run concurrencyLimit of workers until there
-	// is no more requests to execute in the input channel.
-	for i := 0; i < concurrencyLimit; i++ {
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done(): // Check firstly to ensure that the context wasn't cancelled.
-					return
-
-				case request, ok := <-input:
-					if !ok {
-						return
-					}
-
-					buf := bufferPool.Get().(*buffer)
-					buf.protobuf.Reset()
-
-					errMarshal := buf.protobuf.Marshal(request)
-					if errMarshal != nil {
-						mu.Lock()
-						errs = multierr.Append(errs, consumererror.NewPermanent(errMarshal))
-						mu.Unlock()
-						bufferPool.Put(buf)
-						return
-					}
-
-					if errExecute := prwe.execute(ctx, buf); errExecute != nil {
-						mu.Lock()
-						errs = multierr.Append(errs, consumererror.NewPermanent(errExecute))
-						mu.Unlock()
-					}
-					bufferPool.Put(buf)
-				}
-			}
-		}()
-	}
-	wg.Wait()
-
-	return errs
+	// Use the common export logic
+	return prwe.exportRequests(ctx, genericRequests)
 }
 
 func (prwe *prwExporter) handleExportV2(ctx context.Context, symbolsTable writev2.SymbolsTable, tsMap map[string]*writev2.TimeSeries) error {
@@ -102,7 +66,7 @@ func (prwe *prwExporter) handleExportV2(ctx context.Context, symbolsTable writev
 		return err
 	}
 
-	// TODO implement WAl support, can be done after #15277 is fixed
+	// TODO implement WAL support, can be done after #15277 is fixed
 
 	return prwe.exportV2(ctx, requests)
 }

@@ -16,7 +16,7 @@ func batchTimeSeriesV2(tsMap map[string]*writev2.TimeSeries, symbolsTable writev
 	}
 
 	requests := make([]*writev2.Request, 0, max(10, state.nextRequestBufferSize))
-	tsArray := make([]writev2.TimeSeries, 0, min(state.nextTimeSeriesBufferSize, len(tsMap)))
+	tsArray := make([]writev2.TimeSeries, 0, calculateOptimalBufferSize(state.nextTimeSeriesBufferSize, len(tsMap)))
 
 	// Calculate symbols table size once since it's shared across batches
 	symbolsSize := 0
@@ -35,7 +35,7 @@ func batchTimeSeriesV2(tsMap map[string]*writev2.TimeSeries, symbolsTable writev
 			wrapped := convertTimeseriesToRequestV2(tsArray, symbolsTable)
 			requests = append(requests, wrapped)
 
-			tsArray = make([]writev2.TimeSeries, 0, min(state.nextTimeSeriesBufferSize, len(tsMap)-i))
+			tsArray = make([]writev2.TimeSeries, 0, calculateOptimalBufferSize(state.nextTimeSeriesBufferSize, len(tsMap)-i))
 			sizeOfCurrentBatch = symbolsSize // Reset to symbols table size for new batch
 		}
 

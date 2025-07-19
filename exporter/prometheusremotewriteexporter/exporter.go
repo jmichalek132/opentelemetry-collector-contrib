@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,7 +29,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter/internal/metadata"
@@ -93,6 +91,19 @@ var bufferPool = sync.Pool{
 			snappy:   nil,
 		}
 	},
+}
+
+// prwV1Request wraps prompb.WriteRequest to implement the Request interface
+type prwV1Request struct {
+	*prompb.WriteRequest
+}
+
+func (r *prwV1Request) Marshal() ([]byte, error) {
+	return r.WriteRequest.Marshal()
+}
+
+func (r *prwV1Request) Size() int {
+	return r.WriteRequest.Size()
 }
 
 // prwExporter converts OTLP metrics to Prometheus remote write TimeSeries and sends them to a remote endpoint.
@@ -321,57 +332,14 @@ func (prwe *prwExporter) handleExport(ctx context.Context, tsMap map[string]*pro
 
 // export sends a Snappy-compressed WriteRequest containing TimeSeries to a remote write endpoint in order
 func (prwe *prwExporter) export(ctx context.Context, requests []*prompb.WriteRequest) error {
-	input := make(chan *prompb.WriteRequest, len(requests))
-	for _, request := range requests {
-		input <- request
+	// Convert v1 requests to the generic Request interface
+	genericRequests := make([]Request, len(requests))
+	for i, req := range requests {
+		genericRequests[i] = &prwV1Request{WriteRequest: req}
 	}
-	close(input)
 
-	var wg sync.WaitGroup
-
-	concurrencyLimit := int(math.Min(float64(prwe.concurrency), float64(len(requests))))
-	wg.Add(concurrencyLimit) // used to wait for workers to be finished
-
-	var mu sync.Mutex
-	var errs error
-	// Run concurrencyLimit of workers until there
-	// is no more requests to execute in the input channel.
-	for i := 0; i < concurrencyLimit; i++ {
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done(): // Check firstly to ensure that the context wasn't cancelled.
-					return
-
-				case request, ok := <-input:
-					if !ok {
-						return
-					}
-
-					buf := bufferPool.Get().(*buffer)
-					buf.protobuf.Reset()
-					defer bufferPool.Put(buf)
-
-					if errMarshal := buf.protobuf.Marshal(request); errMarshal != nil {
-						mu.Lock()
-						errs = multierr.Append(errs, consumererror.NewPermanent(errMarshal))
-						mu.Unlock()
-						return
-					}
-
-					if errExecute := prwe.execute(ctx, buf); errExecute != nil {
-						mu.Lock()
-						errs = multierr.Append(errs, consumererror.NewPermanent(errExecute))
-						mu.Unlock()
-					}
-				}
-			}
-		}()
-	}
-	wg.Wait()
-
-	return errs
+	// Use the common export logic
+	return prwe.exportRequests(ctx, genericRequests)
 }
 
 func (prwe *prwExporter) execute(ctx context.Context, buf *buffer) error {
