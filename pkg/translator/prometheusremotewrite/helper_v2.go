@@ -4,7 +4,9 @@
 package prometheusremotewrite // import "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/prometheusremotewrite"
 
 import (
+	"fmt"
 	"math"
+	"sort"
 	"strconv"
 
 	"github.com/prometheus/common/model"
@@ -145,4 +147,130 @@ func (c *prometheusConverterV2) addHistogramDataPoints(dataPoints pmetric.Histog
 
 		// TODO implement exemplars support
 	}
+}
+
+// addExponentialHistogramDataPoints converts exponential histogram data points to Prometheus remote write v2 format.
+func (c *prometheusConverterV2) addExponentialHistogramDataPoints(dataPoints pmetric.ExponentialHistogramDataPointSlice,
+	resource pcommon.Resource, settings Settings, baseName string, metadata metadata,
+) error {
+	for x := 0; x < dataPoints.Len(); x++ {
+		pt := dataPoints.At(x)
+		baseLabels := createAttributes(resource, pt.Attributes(), settings.ExternalLabels, nil, false, c.labelNamer)
+
+		histogram, err := exponentialToNativeHistogramV2(pt)
+		if err != nil {
+			return err
+		}
+
+		c.addHistogramWithLabels(histogram, baseName, baseLabels, metadata)
+
+		// TODO implement exemplars support for v2
+	}
+
+	return nil
+}
+
+// exponentialToNativeHistogramV2 translates OTel Exponential Histogram data point
+// to Prometheus Native Histogram for v2 format.
+func exponentialToNativeHistogramV2(p pmetric.ExponentialHistogramDataPoint) (writev2.Histogram, error) {
+	scale := p.Scale()
+	if scale < -4 {
+		return writev2.Histogram{},
+			fmt.Errorf("cannot convert exponential to native histogram."+
+				" Scale must be >= -4, was %d", scale)
+	}
+
+	var scaleDown int32
+	if scale > 8 {
+		scaleDown = scale - 8
+		scale = 8
+	}
+
+	pSpans, pDeltas := convertBucketsLayout(p.Positive(), scaleDown)
+	nSpans, nDeltas := convertBucketsLayout(p.Negative(), scaleDown)
+
+	// Convert prompb spans to writev2 spans
+	positiveSpans := make([]writev2.BucketSpan, len(pSpans))
+	for i, span := range pSpans {
+		positiveSpans[i] = writev2.BucketSpan{
+			Offset: span.Offset,
+			Length: span.Length,
+		}
+	}
+
+	negativeSpans := make([]writev2.BucketSpan, len(nSpans))
+	for i, span := range nSpans {
+		negativeSpans[i] = writev2.BucketSpan{
+			Offset: span.Offset,
+			Length: span.Length,
+		}
+	}
+
+	h := writev2.Histogram{
+		// The counter reset detection must be compatible with Prometheus to
+		// safely set ResetHint to NO. This is not ensured currently.
+		// Sending a sample that triggers counter reset but with ResetHint==NO
+		// would lead to Prometheus panic as it does not double check the hint.
+		// Thus we're explicitly saying UNKNOWN here, which is always safe.
+		ResetHint: writev2.Histogram_RESET_HINT_UNSPECIFIED,
+		Schema:    scale,
+
+		ZeroCount:     &writev2.Histogram_ZeroCountInt{ZeroCountInt: p.ZeroCount()},
+		ZeroThreshold: defaultZeroThreshold,
+
+		PositiveSpans:  positiveSpans,
+		PositiveDeltas: pDeltas,
+		NegativeSpans:  negativeSpans,
+		NegativeDeltas: nDeltas,
+
+		Timestamp: convertTimeStamp(p.Timestamp()),
+	}
+
+	if p.Flags().NoRecordedValue() {
+		h.Sum = math.Float64frombits(value.StaleNaN)
+		h.Count = &writev2.Histogram_CountInt{CountInt: value.StaleNaN}
+	} else {
+		if p.HasSum() {
+			h.Sum = p.Sum()
+		}
+		h.Count = &writev2.Histogram_CountInt{CountInt: p.Count()}
+	}
+
+	return h, nil
+}
+
+// addHistogramWithLabels adds a histogram sample with the given labels to the converter.
+func (c *prometheusConverterV2) addHistogramWithLabels(histogram writev2.Histogram, baseName string, baseLabels []prompb.Label, metadata metadata) {
+	// Create labels for the histogram metric
+	labels := make([]prompb.Label, len(baseLabels)+1)
+	copy(labels, baseLabels)
+	labels[len(baseLabels)] = prompb.Label{
+		Name:  model.MetricNameLabel,
+		Value: baseName,
+	}
+
+	// Sort labels
+	sort.Slice(labels, func(i, j int) bool {
+		return labels[i].Name < labels[j].Name
+	})
+
+	// Convert labels to symbol refs
+	buf := make([]uint32, 0, len(labels)*2)
+	for _, l := range labels {
+		nameRef := c.symbolTable.Symbolize(l.Name)
+		valueRef := c.symbolTable.Symbolize(l.Value)
+		buf = append(buf, nameRef, valueRef)
+	}
+
+	ts := &writev2.TimeSeries{
+		LabelsRefs: buf,
+		Histograms: []writev2.Histogram{histogram},
+		Metadata: writev2.Metadata{
+			Type:    metadata.Type,
+			HelpRef: c.symbolTable.Symbolize(metadata.Help),
+			UnitRef: c.symbolTable.Symbolize(metadata.Unit),
+		},
+	}
+
+	c.unique[timeSeriesSignature(labels)] = ts
 }
