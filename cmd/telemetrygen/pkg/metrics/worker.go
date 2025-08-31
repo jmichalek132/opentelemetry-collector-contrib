@@ -159,6 +159,62 @@ func (w worker) simulateMetrics(res *resource.Resource, exporter sdkmetric.Expor
 					},
 				},
 			})
+		case MetricTypeExponentialHistogram:
+			var totalCount uint64
+			iteration := uint64(i) % 10
+			sum := histogramBucketSamples[iteration].sum
+			// Create exponential histogram buckets with scale 0 (base-2)
+			positiveBuckets := []uint64{1, 2, 3, 2, 1} // Example distribution across positive buckets
+			for _, count := range positiveBuckets {
+				totalCount += count
+			}
+			metrics = append(metrics, metricdata.Metrics{
+				Name: w.metricName,
+				Data: metricdata.ExponentialHistogram[int64]{
+					Temporality: w.aggregationTemporality.AsTemporality(),
+					DataPoints: []metricdata.ExponentialHistogramDataPoint[int64]{
+						{
+							StartTime:  startTime,
+							Time:       now,
+							Attributes: attribute.NewSet(signalAttrs...),
+							Exemplars:  w.exemplars,
+							Count:      totalCount,
+							Sum:        sum,
+							Scale:      0, // Base-2 exponential buckets
+							ZeroCount:  1,
+							PositiveBucket: metricdata.ExponentialBucket{
+								Offset: 0,
+								Counts: positiveBuckets,
+							},
+							NegativeBucket: metricdata.ExponentialBucket{
+								Offset: 0,
+								Counts: []uint64{},
+							},
+						},
+					},
+				},
+			})
+		case MetricTypeSummary:
+			quantileValues := []metricdata.QuantileValue{
+				{Quantile: 0.5, Value: float64(i * 100)},  // 50th percentile
+				{Quantile: 0.9, Value: float64(i * 150)},  // 90th percentile
+				{Quantile: 0.99, Value: float64(i * 200)}, // 99th percentile
+			}
+			metrics = append(metrics, metricdata.Metrics{
+				Name: w.metricName,
+				Data: metricdata.Summary{
+					DataPoints: []metricdata.SummaryDataPoint{
+						{
+							StartTime:      startTime,
+							Time:           now,
+							Attributes:     attribute.NewSet(signalAttrs...),
+							Count:          uint64(i + 1),
+							Sum:            float64(i * 500),
+							QuantileValues: quantileValues,
+						},
+					},
+				},
+			})
 		default:
 			w.logger.Fatal("unknown metric type")
 		}
