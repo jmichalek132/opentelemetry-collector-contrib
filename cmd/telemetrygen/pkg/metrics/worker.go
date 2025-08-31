@@ -165,9 +165,11 @@ func (w worker) simulateMetrics(res *resource.Resource, exporter sdkmetric.Expor
 			sum := histogramBucketSamples[iteration].sum
 			// Create exponential histogram buckets with scale 0 (base-2)
 			positiveBuckets := []uint64{1, 2, 3, 2, 1} // Example distribution across positive buckets
+			zeroCount := uint64(1)
 			for _, count := range positiveBuckets {
 				totalCount += count
 			}
+			totalCount += zeroCount // Include zero count in total
 			metrics = append(metrics, metricdata.Metrics{
 				Name: w.metricName,
 				Data: metricdata.ExponentialHistogram[int64]{
@@ -181,7 +183,7 @@ func (w worker) simulateMetrics(res *resource.Resource, exporter sdkmetric.Expor
 							Count:      totalCount,
 							Sum:        sum,
 							Scale:      0, // Base-2 exponential buckets
-							ZeroCount:  1,
+							ZeroCount:  zeroCount,
 							PositiveBucket: metricdata.ExponentialBucket{
 								Offset: 0,
 								Counts: positiveBuckets,
